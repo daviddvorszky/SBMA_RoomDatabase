@@ -1,5 +1,6 @@
 package com.example.sbma_roomdatabase
 
+import android.util.Log
 import android.widget.Toast
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -7,15 +8,15 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Face
 import androidx.compose.material.icons.filled.List
 import androidx.compose.runtime.*
-import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.livedata.observeAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -27,29 +28,27 @@ import androidx.navigation.NavController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
-import com.example.sbma_roomdatabase.test.DataProvider
-import com.example.sbma_roomdatabase.test.Player
-import com.example.sbma_roomdatabase.test.Team
+import com.example.sbma_roomdatabase.db.*
 import com.example.sbma_roomdatabase.ui.theme.Screen
 
 @Composable
-fun Navigation() {
+fun Navigation(teamViewModel: TeamViewModel, playerViewModel: PlayerViewModel) {
     val navController = rememberNavController()
     NavHost(navController = navController, startDestination = Screen.MainScreen.route) {
         composable(route = Screen.MainScreen.route) {
             MainScreen(navController = navController)
         }
         composable(route = Screen.PlayerListScreen.route) {
-            PlayerListScreen(navController = navController)
+            PlayerListScreen(navController = navController, teamViewModel, playerViewModel)
         }
         composable(route = Screen.TeamListScreen.route) {
-            TeamListScreen(navController = navController)
+            TeamListScreen(navController = navController, teamViewModel)
         }
         composable(route = Screen.AddTeamScreen.route){
-            AddTeamScreen()
+            AddTeamScreen(teamViewModel)
         }
         composable(route = Screen.AddPlayerScreen.route){
-            AddPlayerScreen()
+            AddPlayerScreen(teamViewModel, playerViewModel)
         }
     }
 }
@@ -99,8 +98,10 @@ fun MainScreen(navController: NavController) {
 }
 
 @Composable
-fun PlayerListScreen(navController: NavController) {
-    val teams = DataProvider.teams
+fun PlayerListScreen(navController: NavController, teamViewModel: TeamViewModel, playerViewModel: PlayerViewModel) {
+    val teamsState = teamViewModel.getAll().observeAsState(listOf())
+    val playersState = playerViewModel.getAll().observeAsState(listOf())
+    val context = LocalContext.current
     Column() {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -109,7 +110,11 @@ fun PlayerListScreen(navController: NavController) {
         ) {
             Text("Players", fontSize = 46.sp, fontWeight = FontWeight.Bold)
             Button(onClick = {
-                navController.navigate(Screen.AddPlayerScreen.route)
+                if(teamsState.value.isEmpty()){
+                    Toast.makeText(context, "Create a team first!", Toast.LENGTH_SHORT).show()
+                }else {
+                    navController.navigate(Screen.AddPlayerScreen.route)
+                }
             }) {
                 Icon(imageVector = Icons.Filled.Add, contentDescription = "")
             }
@@ -118,11 +123,11 @@ fun PlayerListScreen(navController: NavController) {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
         ) {
-            teams.forEach() {
+            teamsState.value.forEach() { team ->
                 item {
-                    Text(it.name, fontSize = 32.sp)
+                    Text(team.name, fontSize = 32.sp)
                 }
-                ShowPlayersOfTeam(it)
+                ShowPlayersOfTeam(playersState.value.filter { player -> player.teamId == team.id })
                 item {
                     Spacer(modifier = Modifier.height(30.dp))
                 }
@@ -131,9 +136,9 @@ fun PlayerListScreen(navController: NavController) {
     }
 }
 
-fun LazyListScope.ShowPlayersOfTeam(team: Team) {
-    if (team.players.size > 0)
-        items(team.players) { player ->
+fun LazyListScope.ShowPlayersOfTeam(players: List<Player>) {
+    if (players.isNotEmpty())
+        items(players) { player ->
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -160,8 +165,9 @@ fun LazyListScope.ShowPlayersOfTeam(team: Team) {
 }
 
 @Composable
-fun TeamListScreen(navController: NavController) {
-    val teams = DataProvider.teams
+fun TeamListScreen(navController: NavController, teamViewModel: TeamViewModel) {
+    val teams = teamViewModel.getTeamsWithPlayers().observeAsState(listOf())
+    val context = LocalContext.current
     Column() {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -176,11 +182,24 @@ fun TeamListScreen(navController: NavController) {
             }
         }
         LazyColumn {
-            teams.forEach { team ->
-                item {
-                    Text(text = team.name, fontSize = 24.sp)
-                    Spacer(modifier = Modifier.height(10.dp))
+            items(teams.value){ teamplayer ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment =  Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ){
+                    Text(text = teamplayer.team!!.name, fontSize = 24.sp)
+                    Button(onClick = {
+                        if(teamplayer.players!!.isEmpty()) {
+                            teamViewModel.delete(teamplayer.team!!)
+                        }else{
+                            Toast.makeText(context, "You can only delete empty teams", Toast.LENGTH_SHORT).show()
+                        }
+                    }) {
+                        Icon(imageVector = Icons.Filled.Delete, contentDescription = "")
+                    }
                 }
+                Spacer(modifier = Modifier.height(10.dp))
             }
         }
     }
@@ -188,7 +207,7 @@ fun TeamListScreen(navController: NavController) {
 
 
 @Composable
-fun AddTeamScreen() {
+fun AddTeamScreen(teamViewModel: TeamViewModel) {
     var name by remember { mutableStateOf(TextFieldValue(""))}
     val context = LocalContext.current
     Column(
@@ -211,7 +230,7 @@ fun AddTeamScreen() {
         )
         Button(onClick = {
             if(name.text.isNotEmpty()){
-                DataProvider.AddTeam(name.text)
+                teamViewModel.insert(Team(0, name.text))
                 Toast.makeText(context, "Added team: ${name.text}", Toast.LENGTH_SHORT).show()
             }
         }) {
@@ -223,13 +242,13 @@ fun AddTeamScreen() {
 
 @OptIn(ExperimentalMaterialApi::class)
 @Composable
-fun AddPlayerScreen() {
+fun AddPlayerScreen(teamViewModel: TeamViewModel, playerViewModel: PlayerViewModel) {
     var firstName by remember { mutableStateOf(TextFieldValue(""))}
     var lastName by remember { mutableStateOf(TextFieldValue(""))}
 
-    val options = DataProvider.teams
+    val options = teamViewModel.getAll().observeAsState(listOf()).value
     var expanded by remember { mutableStateOf(false) }
-    var selectedTeam by remember { mutableStateOf(options[0])}
+    var selectedTeam by remember { mutableStateOf(if(options.isEmpty()) Team(0, "") else options[0])}
 
     val context = LocalContext.current
     Column(
@@ -288,7 +307,7 @@ fun AddPlayerScreen() {
         }
         Button(onClick = {
             if(firstName.text.isNotEmpty() && lastName.text.isNotEmpty()){
-                DataProvider.AddPlayer(firstName.text, lastName.text, selectedTeam)
+                playerViewModel.insert(Player(0, firstName.text, lastName.text, selectedTeam.id))
                 Toast.makeText(context, "Added player: ${firstName.text} ${lastName.text}", Toast.LENGTH_SHORT).show()
             }
         }) {
